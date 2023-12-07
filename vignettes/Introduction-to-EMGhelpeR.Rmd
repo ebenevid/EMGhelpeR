@@ -1,0 +1,175 @@
+---
+title: "EMGhelpeR: An EMG analysis package for R"
+author: "Ethan Benevides"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Introduction-to-EMGhelpeR}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  warning = FALSE,
+  rmarkdown.html_vignette.check_title = FALSE
+)
+```
+
+## 1. Introduction 
+`EMGhelpeR` is a purpose-built package designed to streamline and simplify the analysis of electromyography (EMG) data in R. This package was designed with researchers and physicians in mind, its primary objective is to abstract away the complexities associated with signal processing. The goal is to provide an accessible package that facilitates rapid, and accurate analysis of EMG data, catering primarily to users who may not necessarily be experts in signal processing theory.
+
+The package largely builds upon the R `signal` package, the seminal package that brought signal processing functionality to R. `EMGhelpeR` is not designed to be a comprehensive EMG analysis suite, rather, it serves as a valuable resource for novice researchers in EMG and signal processing. It offers an entry point for those just beginning to explore EMG analysis or individuals seeking an accessible tool for efficient EMG processing and feature extraction.
+
+`EMGhelpeR` includes functions that can perform digital signal filtering, signal integration, and feature extraction all in single function calls. We recognize this package may not meet all our users’ needs, but we recommend it as a starting point for those initiating or delving deeper into EMG analysis. We also encourage users to explore the `signal` package to gain insights into the processes underlying `EMGhelpeR` and to discover additional signal processing techniques that could enhance their analyses.
+
+This vignette provides a brief and general overview of `EMGhelpeR’s` functions.
+
+```{r setup}
+library(EMGhelpeR)
+```
+
+## 2. Example data set
+First, we will load some example EMG data to analyze. This dataset entitled `EMG_data`, is a small snippet of diaphragm EMG recorded from a mouse (Note: this dataset is included with the `EMGhelpeR` package, to access call `data("EMG_data")`.
+
+```{r}
+data("EMG_data")
+```
+
+We can easily visualize this data by plotting it. I have done that here using `ggplot2`.  
+
+```{r, fig.width=6, fig.height=4}
+samples <- 1:length(EMG_data)
+plot_tib <- tibble::as_tibble(cbind(samples, EMG_data))
+
+ggplot2::ggplot(data = plot_tib, mapping = ggplot2::aes(x = samples, y = EMG_data)) +
+  ggplot2::geom_line() +
+  ggplot2::theme_bw() +
+  ggplot2::ylab('Diaphragm EMG activity (mV)') +
+  ggplot2::xlab('Samples')
+
+```
+
+## 3. IIR Filtering
+
+The first step in any EMG analysis is filtering. Filtering allows us to remove noise from our signal. Since we are only interested in the EMG captured in our signal, we want to minimize any other signals that may have been picked up. We can do that by designing and implementing any number of digital filters. These filters come in two classes: Finite Impulse Response (FIR) and Infinite Impulse Response (IIR) filters. At this stage, `EMGhelper` only contains IIR filters as they are the most widely used filters for EMG analysis.
+
+Decisions we will need to make include which filter design we want to use, the order of the filter, which type of filter we want (i.e., highpass, lowpass, bandpass), and the frequencies we want to keep or cut out. In the example below I have filtered our example data with a second-order, bandpass, Butterworth filter using `EMGhelpeR’s` `autofilt()` function. This is a very common filter design used in EMG analysis. Now we must decide where to set our cut frequencies. EMG signals for skeletal muscles typically exist in the 300-600 Hz range so we will want to make sure our filter does not attenuate frequencies in that range. In this example, I have set the `high_cut` frequency to 1000 Hz and the `low_cut` frequency to 100 Hz. What this means is that any frequency within the 100-1000 Hz range should not be affected by the filter and anything outside the range will be attenuated. I have left a bit of space on each side of the cut frequencies as Butterworth filters tends to attenuate frequencies close to the cut frequencies. The function also requires the sampling rate of the EMG signal to calculate some parameters needed to design the filter. These data were sampled at 5000 samples per second.
+
+`autofilt()` returns a numeric vector of the filtered EMG trace and also plots the filtered trace on top of the unfiltered trace to give the user a better idea of what signal was filtered out and which part of the signal remains. In this example, we can see not much has changed before and after filtering. This is because these data were filtered at the time of collection. Regardless, it is still a good idea to filter before proceeding with any other analyses. 
+
+```{r, fig.width=6, fig.height=4}
+filtered_EMG <- autofilt(
+  input_data = EMG_data,
+  filter_type = "butter",
+  fs = 5000,
+  order = 2,
+  ftype = "pass",
+  high_cut = 1000,
+  low_cut = 100
+)
+```
+
+Oh, by the way. Many of the functions in the `EMGhelpeR` package plot their output by default. If you do not want to see these plots set the `preview_plot` argument equal to `FALSE`. 
+
+
+## 4. Integration
+### 4.1 Rectify and Integrate
+Another common step in EMG analysis is to integrate the EMG signal. This step is often required to detect and extract features from the EMG signal, such as the amplitude of the EMG burst. One such type of integration method is known as rectification and integration. During this transformation, the absolute value of the EMG signal is first calculated and then a moving average filter is applied to the rectified signal to integrate it. The `recint()` function provides a simple interface for rectifying and integrating an EMG signal in a single function call. It takes in the EMG data as an input (`input_data`) as well as the sampling rate of the data (`fs`). Additionally, it requires the size of the moving average filter window (`window`) and the time units for the window (`time_units`). Window size is a very important determinant when integrating a signal.  Too short and the data remains too messy for accurate feature detection. 
+
+```{r, fig.width = 6, fig.height = 4}
+too_short <- recint(
+  input_data = filtered_EMG,
+  window = 1,
+  fs = 5000,
+  time_units = 'ms'
+)
+```
+
+Too long and the signal is distorted. 
+
+```{r, fig.width = 6, fig.height = 4}
+too_long <- recint(
+  input_data = filtered_EMG,
+  window = 1,
+  fs = 5000,
+  time_units = 'sec'
+)
+```
+
+One nice feature of the `recint()` function is the ability to hop between time units (samples, milliseconds, and seconds) quickly and easily.
+
+Here I have settled on a window size of 25 ms which nicely cleans up the signal without distorting the important features.
+
+```{r, fig.width = 6, fig.height = 4}
+rectint_EMG <- recint(
+  input_data = filtered_EMG,
+  window = 25,
+  fs = 5000,
+  time_units = 'ms'
+)
+```
+
+### 4.2 Root Mean Square Integration
+One other type of integration method commonly used in EMG analysis is known as root mean square (RMS) integration. As the name suggests, the root mean square is the square root of the mean of a set of numbers, in our case the EMG signal. However, in the case of an EMG signal we use a moving RMS filter similar to the moving average filter previously discussed. The `autorms()` function provides an easy interface for calculating the RMS of an EMG signal. As you can see `autorms()` produces a trace much like the rectification and integration method above with all the same function inputs. I include this option here as some scientists claim it is a superior integration method that is better at preserving essential EMG features. 
+
+```{r, fig.width = 6, fig.height = 4}
+rms_EMG = autorms(
+  input_data = filtered_EMG,
+  fs = 5000,
+  window = 75,
+  time_units = "ms"
+)
+```
+
+## 5. Feature Detection
+Now that we have filtered and integrated our EMG signal, we can move on to feature extraction. This is the exciting part of analysis as we finally get to quantify our data. One common and simple feature we can extract from our EMG data is the peak EMG burst amplitude. We can think of this as the magnitude of the EMG signal at its peak output.
+
+To help us with this we have the `peakfinder()` function. As the name suggests this function helps us identify all the peaks or relative maxima in our signal. The only required input is the EMG data. To accurately detect peak output, you'll want to use either the rectified and integrated or RMS-transformed signals. If we run the function, you'll see an output graph of the signal we input with all the detected peaks plotted as red dots. You may have noticed in this instance we have detected quite a few peaks.  
+
+```{r, fig.width = 6, fig.height = 4}
+peak_out <- peakfinder(input_data = rectint_EMG)
+```
+
+If you remember, we just want to find the values corresponding to the peak amplitude of each EMG burst but here we're detecting all sorts of smaller peaks from the lower part of the signal. To help fix this the `peakfinder()` function comes with a few additional arguments that can help us fine-tune which peaks we are detecting. The first argument is called `threshold`, and we can use that to set a threshold on the Y axis such that no peaks will be detected below that threshold. In this example, if we set the threshold to 0.1 no peaks will be detected below 0.1.
+
+```{r, fig.width = 6, fig.height = 4}
+peak_out <- peakfinder(input_data = rectint_EMG, threshold = 0.1)
+```
+
+You can already see here that quite a few of the peaks we originally detected have now been removed. But you may notice that this still isn't quite right. All of the remaining peaks now correspond to the maximum amplitude of one of the EMG bursts however, some of the bursts have been detected more than once. This is because of small fluctuations in the signal that create more local maxima than is ideal. To help solve this `peakfinder()` comes with an additional argument, `min_distance`. This argument sets the minimum distance two peaks must be set apart to be detected as a peak. In simple terms, if two peaks are closer together then the set minimum distance only the larger of the two peaks will be retained. If we now add this argument to our function call and set an appropriate distance in samples, we will see that we now only get one detected peak per EMG burst.
+
+```{r, fig.width = 6, fig.height = 4}
+peak_out <- peakfinder(
+  input_data = rectint_EMG,
+  threshold = 0.1,
+  min_distance = 2500
+)
+```
+
+We now have an accurate measure of the magnitude of the EMG signal for each diaphragm EMG burst.
+
+## 6. Power Spectral Analysis
+Power spectral analysis (PSA) is a technique used in signal processing to analyze the frequency content of a signal. It involves examining the distribution of power or energy in a signal as a function of frequency. It tells us how much a given frequency contributes to the overall signal. This technique is sometimes used in EMG analysis as certain interventions or disease states can change the power signature of EMG signals.  `EMGhelpeR` comes with two functions that can perform power spectral analyses.
+
+The first, more general function is called `psa()`. This function takes in EMG data (`input_data`) and sampling rate (`fs`) as inputs and returns the power for each frequency in the input signal. 
+
+```{r, fig.width = 6, fig.height = 4}
+psa_results <- psa(input_data = EMG_data, fs = 5000)
+```
+
+The second function is called `bandpower()`. Similar to `psa()` this function takes in EMG data (`input_data`) and sampling rate (`fs`) as an input but also has an additional input argument, `freq_band`. In the `freq_band` argument we enter the frequency or frequency band that we are interested in and `bandpower()` returns the average power in the input signal at that frequency/frequency band. 
+
+```{r}
+bandpower_output <- bandpower(
+  input_data = EMG_data,
+  fs = 5000,
+  freq_band = c(250,450)
+  )
+
+print(bandpower_output)
+```
+
+
+
